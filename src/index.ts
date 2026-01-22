@@ -5,16 +5,28 @@ import { streamText } from "ai";
 
 // --- Configuration ---
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-const SYSTEM_PROMPT = `You are a Senior Software Engineer acting as a Code Reviewer.
-Your goal is to improve code quality, security, and performance.
 
-When reviewing code:
-1. Identify critical bugs or security risks first.
-2. If you suggest a code fix, use a "git diff" style format in a code block.
-   - Use "-" for lines to remove.
-   - Use "+" for lines to add.
-3. Be concise.
-4. Use Markdown for all code snippets.`;
+// 🚀 UPDATED PROMPT: PRETTY FORMATTING
+const SYSTEM_PROMPT = `You are an expert Technical Interview Coach (LeetCode Helper).
+Your goal is to analyze the user's solution and guide them toward the optimal approach *without* giving away the answer.
+
+**STRICT RESPONSE RULES:**
+1. **Analyze:** First, determine the Time and Space complexity.
+2. **Coach:** Then, provide a helpful nudge or confirmation.
+3. **Format:** You MUST use the following Markdown structure exactly:
+
+## 📊 Analysis
+* **Time:** \`O(...)\`
+* **Space:** \`O(...)\`
+
+## 💡 Coach's Hint
+> (Write your verbal nudge here inside a blockquote. If the solution is already optimal, congratulate them! If not, explain the concept they are missing, like "Hash Map" or "Two Pointers", without writing the code.)
+
+## 📚 Similar Problems (Only if Optimal)
+* [Problem Name 1]
+* [Problem Name 2]
+* [Problem Name 3]
+`;
 
 // --- State Definition ---
 interface ReviewState {
@@ -33,74 +45,77 @@ export class CodeReviewAgent extends Agent<Env, ReviewState> {
 	async onMessage(connection: Connection, message: string) {
 		const state = this.state;
 
-		// 1. Reset Command
 		if (message === "/reset") {
 			this.setState({ currentCode: undefined, history: [] });
 			connection.send(JSON.stringify({ type: "reset" }));
 			return;
 		}
 
-		// 2. Determine Context
-		const isCodeSnippet = message.includes("\n") || message.includes("{") || message.length > 200;
-		let messages: any[] = []; // Vercel AI SDK compatible messages
+		// Smart Context Logic
+		let isCodeSnippet = false;
+		if (!state.currentCode) {
+			isCodeSnippet = true;
+		} else {
+			if (message.length > 200 && (message.includes("function") || message.includes("class"))) {
+				isCodeSnippet = true;
+			}
+		}
+
+		// Manage History
+		if (state.history.length > 6) {
+			state.history = state.history.slice(-6);
+		}
+
+		let messages: any[] = [];
 
 		if (isCodeSnippet) {
 			state.currentCode = message;
 			state.history = [];
-			const userContent = `Please review this code:\n\n${message}`;
+			const userContent = `Analyze this LeetCode solution:\n\n${message}`;
 
-			// Setup initial messages
 			messages = [
 				{ role: "system", content: SYSTEM_PROMPT },
 				{ role: "user", content: userContent }
 			];
 			state.history.push({ role: "user", content: userContent });
+
 		} else {
-			if (!state.currentCode) {
-				connection.send(JSON.stringify({ type: "error", text: "Please paste the code you want me to review first." }));
-				return;
-			}
 			messages = [
 				{ role: "system", content: SYSTEM_PROMPT },
-				{ role: "user", content: `Context - Code:\n${state.currentCode}` },
+				{ role: "user", content: `Context - User's Solution:\n\`\`\`\n${state.currentCode}\n\`\`\`` },
 				...state.history,
 				{ role: "user", content: message }
 			];
 			state.history.push({ role: "user", content: message });
 		}
 
-		// 3. START STREAMING
 		connection.send(JSON.stringify({ type: "start" }));
 
 		try {
-			// Initialize the Vercel AI Provider
 			const workersai = createWorkersAI({ binding: this.env.AI });
 
-			// Use the SDK to handle the stream parsing for us
 			const result = streamText({
 				model: workersai(MODEL_ID),
-				messages: messages, // Pass the array directly
-				maxTokens: 2500,
+				messages: messages,
+				maxTokens: 2048,
+				temperature: 0.2,
 			});
 
 			let fullResponse = "";
 
-			// 4. Iterate over clean text chunks
 			for await (const textPart of result.textStream) {
 				fullResponse += textPart;
 				connection.send(JSON.stringify({ type: "chunk", text: textPart }));
 			}
 
-			// 5. Finish
 			connection.send(JSON.stringify({ type: "done" }));
 
-			// Save to memory
 			state.history.push({ role: "assistant", content: fullResponse });
 			this.setState(state);
 
 		} catch (error: any) {
 			console.error("AI Error:", error);
-			connection.send(JSON.stringify({ type: "error", text: `Error: ${error.message || "Unknown error"}` }));
+			connection.send(JSON.stringify({ type: "error", text: `Error: ${error.message}` }));
 		}
 	}
 }
