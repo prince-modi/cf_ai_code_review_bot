@@ -1,132 +1,140 @@
-import { routeAgentRequest, type Schedule } from "agents";
+import { Agent, routeAgentRequest } from "agents";
+import type { Connection } from "agents";
+import { createWorkersAI } from "workers-ai-provider";
+import { streamText } from "ai";
 
-import { getSchedulePrompt } from "agents/schedule";
+// --- Configuration ---
+const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
-import { AIChatAgent } from "@cloudflare/ai-chat";
-import {
-  generateId,
-  streamText,
-  type StreamTextOnFinishCallback,
-  stepCountIs,
-  createUIMessageStream,
-  convertToModelMessages,
-  createUIMessageStreamResponse,
-  type ToolSet
-} from "ai";
-import { openai } from "@ai-sdk/openai";
-import { processToolCalls, cleanupMessages } from "./utils";
-import { tools, executions } from "./tools";
-// import { env } from "cloudflare:workers";
+const SYSTEM_PROMPT = `You are an expert Technical Interview Coach (LeetCode Helper).
+Your goal is to analyze the user's solution and guide them toward the optimal approach *without* giving away the answer.
 
-const model = openai("gpt-4o-2024-11-20");
-// Cloudflare AI Gateway
-// const openai = createOpenAI({
-//   apiKey: env.OPENAI_API_KEY,
-//   baseURL: env.GATEWAY_BASE_URL,
-// });
+**STRICT RESPONSE RULES:**
+1. **Analyze:** First, determine the Time and Space complexity.
+2. **Coach:** Then, provide a helpful nudge or confirmation.
+3. **Format:** You MUST use the following Markdown structure exactly:
 
-/**
- * Chat Agent implementation that handles real-time AI chat interactions
- */
-export class Chat extends AIChatAgent<Env> {
-  /**
-   * Handles incoming chat messages and manages the response stream
-   */
-  async onChatMessage(
-    onFinish: StreamTextOnFinishCallback<ToolSet>,
-    _options?: { abortSignal?: AbortSignal }
-  ) {
-    // const mcpConnection = await this.mcp.connect(
-    //   "https://path-to-mcp-server/sse"
-    // );
+## Analysis
+* **Time:** \`O(...)\`
+* **Space:** \`O(...)\`
 
-    // Collect all tools, including MCP tools
-    const allTools = {
-      ...tools,
-      ...this.mcp.getAITools()
-    };
+## Coach's Hint
+> (Write your verbal nudge here inside a blockquote. If the solution is already optimal, congratulate them! If not, explain the concept they are missing, like "Hash Map" or "Two Pointers", without writing the code.)
 
-    const stream = createUIMessageStream({
-      execute: async ({ writer }) => {
-        // Clean up incomplete tool calls to prevent API errors
-        const cleanedMessages = cleanupMessages(this.messages);
+## Similar Problems (Only if Optimal)
+* [Problem Name 1]
+* [Problem Name 2]
+* [Problem Name 3]
+`;
 
-        // Process any pending tool calls from previous messages
-        // This handles human-in-the-loop confirmations for tools
-        const processedMessages = await processToolCalls({
-          messages: cleanedMessages,
-          dataStream: writer,
-          tools: allTools,
-          executions
-        });
-
-        const result = streamText({
-          system: `You are a helpful assistant that can do various tasks... 
-
-${getSchedulePrompt({ date: new Date() })}
-
-If the user asks to schedule a task, use the schedule tool to schedule the task.
-`,
-
-          messages: await convertToModelMessages(processedMessages),
-          model,
-          tools: allTools,
-          // Type boundary: streamText expects specific tool types, but base class uses ToolSet
-          // This is safe because our tools satisfy ToolSet interface (verified by 'satisfies' in tools.ts)
-          onFinish: onFinish as unknown as StreamTextOnFinishCallback<
-            typeof allTools
-          >,
-          stopWhen: stepCountIs(10)
-        });
-
-        writer.merge(result.toUIMessageStream());
-      }
-    });
-
-    return createUIMessageStreamResponse({ stream });
-  }
-  async executeTask(description: string, _task: Schedule<string>) {
-    await this.saveMessages([
-      ...this.messages,
-      {
-        id: generateId(),
-        role: "user",
-        parts: [
-          {
-            type: "text",
-            text: `Running scheduled task: ${description}`
-          }
-        ],
-        metadata: {
-          createdAt: new Date()
-        }
-      }
-    ]);
-  }
+// --- State Definition ---
+interface ReviewState {
+	currentCode?: string;
+	history: { role: "system" | "user" | "assistant"; content: string }[];
 }
 
-/**
- * Worker entry point that routes incoming requests to the appropriate handler
- */
-export default {
-  async fetch(request: Request, env: Env, _ctx: ExecutionContext) {
-    const url = new URL(request.url);
+export class CodeReviewAgent extends Agent<Env, ReviewState> {
+	async onStart() {
+		this.setState({
+			currentCode: undefined,
+			history: [],
+		});
+	}
 
-    if (url.pathname === "/check-open-ai-key") {
-      const hasOpenAIKey = !!process.env.OPENAI_API_KEY;
-      return Response.json({
-        success: hasOpenAIKey
-      });
-    }
-    if (!process.env.OPENAI_API_KEY) {
-      console.error(
-        "OPENAI_API_KEY is not set, don't forget to set it locally in .dev.vars, and use `wrangler secret bulk .dev.vars` to upload it to production"
-      );
-    }
-    return (
-      // Route the request to our agent or return 404 if not found
-      (await routeAgentRequest(request, env)) ||
-      new Response("Not found", { status: 404 })
-    );
-  }
+	async onMessage(connection: Connection, message: string) {
+		const state = this.state;
+
+		if (message === "/reset") {
+			this.setState({ currentCode: undefined, history: [] });
+			connection.send(JSON.stringify({ type: "reset" }));
+			return;
+		}
+
+		// --- Smart Context Logic ---
+		let isCodeSnippet = false;
+		if (!state.currentCode) {
+			isCodeSnippet = true;
+		} else {
+			if (
+				message.length > 200 &&
+				(message.includes("function") || message.includes("class"))
+			) {
+				isCodeSnippet = true;
+			}
+		}
+
+		// --- Manage History ---
+		if (state.history.length > 8) {
+			state.history = state.history.slice(-8);
+		}
+
+		let messages: any[] = [];
+
+		if (isCodeSnippet) {
+			state.currentCode = message;
+			state.history = [];
+			const userContent = `Analyze this LeetCode solution:\n\n${message}`;
+
+			messages = [
+				{ role: "system", content: SYSTEM_PROMPT },
+				{ role: "user", content: userContent },
+			];
+			state.history.push({ role: "user", content: userContent });
+		} else {
+			messages = [
+				{ role: "system", content: SYSTEM_PROMPT },
+				{
+					role: "user",
+					content: `Context - User's Solution:\n\`\`\`\n${state.currentCode}\n\`\`\``,
+				},
+				...state.history,
+				{ role: "user", content: message },
+			];
+			state.history.push({ role: "user", content: message });
+		}
+
+		connection.send(JSON.stringify({ type: "start" }));
+
+		try {
+			const workersai = createWorkersAI({ binding: this.env.AI });
+
+			// REMOVED: tools, maxSteps (Restored pure text streaming)
+			const result = streamText({
+				model: workersai(MODEL_ID),
+				messages: messages,
+				maxTokens: 2048,
+				temperature: 0.2,
+			});
+
+			let fullResponse = "";
+
+			for await (const textPart of result.textStream) {
+				fullResponse += textPart;
+				connection.send(JSON.stringify({ type: "chunk", text: textPart }));
+			}
+
+			connection.send(JSON.stringify({ type: "done" }));
+
+			state.history.push({ role: "assistant", content: fullResponse });
+			this.setState(state);
+		} catch (error: any) {
+			console.error("AI Error:", error);
+			connection.send(
+				JSON.stringify({ type: "error", text: `Error: ${error.message}` })
+			);
+		}
+	}
+}
+
+export interface Env {
+	AI: any;
+}
+
+export default {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext) {
+		return (
+			(await routeAgentRequest(request, env)) ||
+			new Response("Not found", { status: 404 })
+		);
+	},
 } satisfies ExportedHandler<Env>;
