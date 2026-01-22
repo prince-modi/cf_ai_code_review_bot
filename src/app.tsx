@@ -121,7 +121,7 @@ export default function App() {
 			</div>
 
 			<div style={{ marginTop: "20px", display: "flex", gap: "10px" }}>
-				<textarea ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Paste solution or ask for a hint..." style={{ flex: 1, padding: "15px", borderRadius: "8px", border: "1px solid #ccc", minHeight: "60px", fontFamily: "monospace", fontSize: "14px" }} />
+				<textarea ref={inputRef} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }} placeholder="Paste solution..." style={{ flex: 1, padding: "15px", borderRadius: "8px", border: "1px solid #ccc", minHeight: "60px", fontFamily: "monospace", fontSize: "14px" }} />
 				<button onClick={sendMessage} disabled={isStreaming} style={{ padding: "0 30px", borderRadius: "8px", border: "none", background: isStreaming ? "#ccc" : "#000", color: "white", cursor: isStreaming ? "not-allowed" : "pointer", fontWeight: "bold" }}>Send</button>
 			</div>
 		</div>

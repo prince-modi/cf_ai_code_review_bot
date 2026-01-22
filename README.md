@@ -47,7 +47,7 @@ To run this project locally, you will need Node.js and a Cloudflare account.
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/prince-modi/cf_ai_code_review_bot.git](https://github.com/prince-modi/cf_ai_code_review_bot.git)
+    git clone https://github.com/prince-modi/cf_ai_code_review_bot.git
     cd cf_ai_code_review_bot
     ```
 
