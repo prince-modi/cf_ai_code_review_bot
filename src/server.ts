@@ -3,7 +3,6 @@ import type { Connection } from "agents";
 import { createWorkersAI } from "workers-ai-provider";
 import { streamText } from "ai";
 
-// --- Configuration ---
 const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
 const SYSTEM_PROMPT = `You are an expert Technical Interview Coach (LeetCode Helper).
@@ -27,7 +26,6 @@ Your goal is to analyze the user's solution and guide them toward the optimal ap
 * [Problem Name 3]
 `;
 
-// --- State Definition ---
 interface ReviewState {
 	currentCode?: string;
 	history: { role: "system" | "user" | "assistant"; content: string }[];
@@ -50,7 +48,6 @@ export class CodeReviewAgent extends Agent<Env, ReviewState> {
 			return;
 		}
 
-		// --- Smart Context Logic ---
 		let isCodeSnippet = false;
 		if (!state.currentCode) {
 			isCodeSnippet = true;
@@ -63,7 +60,6 @@ export class CodeReviewAgent extends Agent<Env, ReviewState> {
 			}
 		}
 
-		// --- Manage History ---
 		if (state.history.length > 8) {
 			state.history = state.history.slice(-8);
 		}
@@ -98,7 +94,6 @@ export class CodeReviewAgent extends Agent<Env, ReviewState> {
 		try {
 			const workersai = createWorkersAI({ binding: this.env.AI });
 
-			// REMOVED: tools, maxSteps (Restored pure text streaming)
 			const result = streamText({
 				model: workersai(MODEL_ID),
 				messages: messages,
