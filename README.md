@@ -2,7 +2,7 @@
 
 An AI-powered Code Review Agent built on the **Cloudflare Agents SDK**. It acts as a Senior Software Engineer, analyzing code for security, performance, and bugs in real-time.
 
-**[Live Demo Link Here](https://code-review-bot.princebmodi.workers.dev/)** (Add your deployed link after running `npm run deploy`)
+**[Live Demo Link Here](https://code-review-bot.princebmodi.workers.dev/)** 
 
 ---
 
@@ -36,8 +36,8 @@ This project satisfies the assignment requirements using the following stack:
 
 1.  **Clone the repo**
     ```bash
-    git clone <your-repo-url>
-    cd code-review-bot
+    git clone https://github.com/prince-modi/cf_ai_code_review_bot.git
+    cd cf_ai_code_review_bot
     ```
 
 2.  **Install dependencies**
