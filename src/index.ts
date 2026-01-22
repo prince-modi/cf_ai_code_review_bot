@@ -1,8 +1,10 @@
 import { Agent, routeAgentRequest } from "agents";
 import type { Connection } from "agents";
+import { createWorkersAI } from "workers-ai-provider";
+import { streamText } from "ai";
 
 // --- Configuration ---
-const MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+const MODEL_ID = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const SYSTEM_PROMPT = `You are a Senior Software Engineer acting as a Code Reviewer.
 Your goal is to improve code quality, security, and performance.
 
@@ -11,7 +13,6 @@ When reviewing code:
 2. If you suggest a code fix, use a "git diff" style format in a code block.
    - Use "-" for lines to remove.
    - Use "+" for lines to add.
-   - Keep unchanged context lines around the changes.
 3. Be concise.
 4. Use Markdown for all code snippets.`;
 
@@ -22,7 +23,6 @@ interface ReviewState {
 }
 
 export class CodeReviewAgent extends Agent<Env, ReviewState> {
-	// Initialize Memory
 	async onStart() {
 		this.setState({
 			currentCode: undefined,
@@ -30,76 +30,78 @@ export class CodeReviewAgent extends Agent<Env, ReviewState> {
 		});
 	}
 
-	// Helper: Run Llama 3.3
-	// Helper: Run Llama 3.3
-	async runAI(messages: any[]) {
-		try {
-			const response = await this.env.AI.run(MODEL, {
-				messages,
-				// FIX: Allow the model to generate up to ~2000 words
-				max_tokens: 2500
-			});
-
-			return "response" in response ? (response.response as string) : "";
-		} catch (error) {
-			console.error("AI Error:", error);
-			return "⚠️ I encountered an error while analyzing your code. Please try again.";
-		}
-	}
-	// Handle User Input (Chat)
 	async onMessage(connection: Connection, message: string) {
 		const state = this.state;
-		let reply = "";
 
-		// Heuristic: Is this a new code snippet or a chat message?
-		// If it has multiple lines or braces, we treat it as code to review.
+		// 1. Reset Command
+		if (message === "/reset") {
+			this.setState({ currentCode: undefined, history: [] });
+			connection.send(JSON.stringify({ type: "reset" }));
+			return;
+		}
+
+		// 2. Determine Context
 		const isCodeSnippet = message.includes("\n") || message.includes("{") || message.length > 200;
+		let messages: any[] = []; // Vercel AI SDK compatible messages
 
 		if (isCodeSnippet) {
-			// Logic: New Review
 			state.currentCode = message;
-			state.history = []; // Reset context for new code
+			state.history = [];
+			const userContent = `Please review this code:\n\n${message}`;
 
-			const prompt = `Please review this code:\n\n${message}`;
-
-			// Send "Thinking" signal (Optional, handled by UI spinner usually)
-
-			reply = await this.runAI([
+			// Setup initial messages
+			messages = [
 				{ role: "system", content: SYSTEM_PROMPT },
-				{ role: "user", content: prompt }
-			]);
-
-			// Update Memory
-			state.history.push({ role: "user", content: prompt });
-			state.history.push({ role: "assistant", content: reply });
-
+				{ role: "user", content: userContent }
+			];
+			state.history.push({ role: "user", content: userContent });
 		} else {
-			// Logic: Follow-up Question
 			if (!state.currentCode) {
-				connection.send(JSON.stringify({ text: "Please paste the code you want me to review first." }));
+				connection.send(JSON.stringify({ type: "error", text: "Please paste the code you want me to review first." }));
 				return;
 			}
-
-			// Contextual Prompt
-			const messages = [
+			messages = [
 				{ role: "system", content: SYSTEM_PROMPT },
-				{ role: "user", content: `Context - The code we are discussing:\n${state.currentCode}` },
+				{ role: "user", content: `Context - Code:\n${state.currentCode}` },
 				...state.history,
 				{ role: "user", content: message }
 			];
-
-			reply = await this.runAI(messages);
-
-			// Update Memory
 			state.history.push({ role: "user", content: message });
-			state.history.push({ role: "assistant", content: reply });
 		}
 
-		// Save State (Durable Object)
-		this.setState(state);
+		// 3. START STREAMING
+		connection.send(JSON.stringify({ type: "start" }));
 
-		// Send Response
-		connection.send(JSON.stringify({ text: reply }));
+		try {
+			// Initialize the Vercel AI Provider
+			const workersai = createWorkersAI({ binding: this.env.AI });
+
+			// Use the SDK to handle the stream parsing for us
+			const result = streamText({
+				model: workersai(MODEL_ID),
+				messages: messages, // Pass the array directly
+				maxTokens: 2500,
+			});
+
+			let fullResponse = "";
+
+			// 4. Iterate over clean text chunks
+			for await (const textPart of result.textStream) {
+				fullResponse += textPart;
+				connection.send(JSON.stringify({ type: "chunk", text: textPart }));
+			}
+
+			// 5. Finish
+			connection.send(JSON.stringify({ type: "done" }));
+
+			// Save to memory
+			state.history.push({ role: "assistant", content: fullResponse });
+			this.setState(state);
+
+		} catch (error: any) {
+			console.error("AI Error:", error);
+			connection.send(JSON.stringify({ type: "error", text: `Error: ${error.message || "Unknown error"}` }));
+		}
 	}
 }
 
