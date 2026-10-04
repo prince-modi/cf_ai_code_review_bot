@@ -1,9 +1,8 @@
 {
   "name": "kernel-test",
-  "image": "ubuntu:18.04",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
   "privileged": true,
   "mounts": [
     "source=/lib/modules,target=/lib/modules,type=bind"
-  ],
-  "postCreateCommand": "apt-get update -qq && apt-get install -y -qq kmod"
+  ]
 }
