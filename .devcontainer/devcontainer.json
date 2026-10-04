@@ -1,5 +1,5 @@
 {
-  "name": "test-1804",
-  "image": "ubuntu:18.04",
-  "privileged": true
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+  "privileged": true,
+  "mounts": ["source=/lib/modules,target=/lib/modules,type=bind"]
 }
