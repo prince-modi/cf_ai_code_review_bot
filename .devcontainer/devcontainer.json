@@ -1,5 +1,5 @@
 {
   "name": "hello-test",
-  "image": "ghcr.io/prince-modi/hello-test:1",
+  "image": "ghcr.io/prince-modi/hello-test:3",
   "privileged": true
 }
