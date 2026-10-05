@@ -1,5 +1,5 @@
 {
-  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
-  "privileged": true,
-  "mounts": ["source=/lib/modules,target=/lib/modules,type=bind"]
+  "name": "hello-test",
+  "image": "ghcr.io/prince-modi/hello-test:1",
+  "privileged": true
 }
